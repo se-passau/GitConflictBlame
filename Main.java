@@ -22,22 +22,56 @@
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public class Main {
     public static void main(String[] args) throws IOException {
-        System.out.println("File;Revision;Author;Lines");
+        System.out.println("Chunk-based");
+        System.out.println("File;Revision;Author;NumLines;Lines");
         for (String conflictFile : args) {
-            HashMap<String, HashMap<String, Integer>> blame
-                    = GitConflictBlame.blame(new File(conflictFile));
+            // show chunk-based stats
+            HashMap<String, HashMap<String, List<List<Integer>>>> blameChunks
+                    = GitConflictBlame.blameChunks(new File(conflictFile));
 
-            for (Map.Entry<String, HashMap<String, Integer>> entry : blame.entrySet()) {
+            for (Map.Entry<String, HashMap<String, List<List<Integer>>>> entry : blameChunks
+                    .entrySet()) {
                 String revision = entry.getKey();
-                HashMap<String, Integer> authors = entry.getValue();
+                HashMap<String, List<List<Integer>>> authors = entry.getValue();
+
+                authors.keySet().stream().forEach(author -> authors.get(author).stream().
+                        forEach(chunk -> System.out.println(String.format("%s;%s;%s;%d;[%s]",
+                                conflictFile,
+                                revision,
+                                author,
+                                chunk.size(),
+                                chunk.stream().map(String::valueOf)
+                                        .collect(Collectors.joining(","))))));
+            }
+        }
+
+        System.out.println();
+        System.out.println("File-based");
+        System.out.println("File;Revision;Author;NumLines;Lines");
+        for (String conflictFile : args) {
+
+            // show file-based stats
+            HashMap<String, HashMap<String, List<Integer>>> blameFile
+                    = GitConflictBlame.blameFile(new File(conflictFile));
+
+            for (Map.Entry<String, HashMap<String, List<Integer>>> entry : blameFile.entrySet()) {
+                String revision = entry.getKey();
+                HashMap<String, List<Integer>> authors = entry.getValue();
 
                 authors.keySet().forEach(author ->
-                        System.out.println(String.format("%s;%s;%s;%d",
-                                conflictFile, revision, author, authors.get(author))));
+                        System.out.println(String.format("%s;%s;%s;%d;[%s]",
+                                conflictFile,
+                                revision,
+                                author,
+                                authors.get(author).stream().count(),
+                                authors.get(author).stream()
+                                        .map(String::valueOf).collect(Collectors.joining(",")))));
             }
         }
     }

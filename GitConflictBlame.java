@@ -23,7 +23,9 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 class GitConflictBlame {
@@ -32,12 +34,13 @@ class GitConflictBlame {
     private static final String CONFLICT_SEP = "=======";
     private static final String CONFLICT_END = ">>>>>>>";
 
-    private static final String BLAME_CMD = "git blame -e";
+    // -e prints the email addresses, -n the original line numbers
+    private static final String BLAME_CMD = "git blame -e -n";
 
     // we need this to disable the pager
     private static final String[] BLAME_ENV = {"GIT_PAGER=cat"};
 
-    static HashMap<String, HashMap<String, Integer>> blame(File conflictFile) throws IOException {
+    static HashMap<String, HashMap<String, List<List<Integer>>>> blameChunks(File conflictFile) throws IOException {
         /*
          * Track location by using the following encoding for the values:
          * -1 = out of conflict
@@ -49,8 +52,8 @@ class GitConflictBlame {
         // no octopus merges supported for now ;)
         String[] revisions = new String[2];
 
-        HashMap<String, HashMap<String, Integer>> result = new HashMap<>();
-        HashMap<String, Integer> chunkAuthors = new HashMap<>();
+        HashMap<String, HashMap<String, List<List<Integer>>>> result = new HashMap<>();
+        HashMap<String, List<Integer>> chunkAuthors = new HashMap<>();
 
         // run blame
         Runtime run = Runtime.getRuntime();
@@ -62,10 +65,12 @@ class GitConflictBlame {
         String line;
 
         while ((line = buf.readLine()) != null) {
-            // hack line sby blame into useful output
-            line = line.replaceAll("^.+?\\(<(.+?)>.+?\\)(.+?)", "$1:$2");
-            String author = line.split(":")[0];
-            String content = line.split(":", 2)[1].trim();
+            // hack lines by blame into useful output
+            line = line.replaceAll("^[a-fA-F0-9]+?\\s+?([0-9]+?)\\s+?\\(<(.+?)>.+?\\)(.+?)", "$2:$1:$3");
+            String[] splitLine = line.split(":", 3);
+            String author = splitLine[0];
+            Integer number = Integer.valueOf(splitLine[1]);
+            String content = splitLine[2].trim();
 
             // control flow seems a bit odd, I did this to collect the revision names before
             // pushing the authors into the hashmap
@@ -80,10 +85,13 @@ class GitConflictBlame {
                 revisions[1] = content.split(" ", 2)[1];
                 location = -1;
             } else if (location >= 0) {
-                int contributions = chunkAuthors.containsKey(author)
-                        ? chunkAuthors.get(author) + 1
-                        : 1;
-                chunkAuthors.put(author, contributions);
+                // we are in one of the conflicting chunks
+
+                List<Integer> authorLines = chunkAuthors.containsKey(author)
+                        ? chunkAuthors.get(author)
+                        : new ArrayList<>();
+                authorLines.add(number);
+                chunkAuthors.put(author, authorLines);
                 continue;
             } else {
                 continue;
@@ -93,14 +101,15 @@ class GitConflictBlame {
 
             String revision = location == -1 ? revisions[1] : revisions[0];
             result.putIfAbsent(revision, new HashMap<>());
-            HashMap<String, Integer> authors = result.get(revision);
+            HashMap<String, List<List<Integer>>> authors = result.get(revision);
 
-            for (Map.Entry<String, Integer> entry : chunkAuthors.entrySet()) {
+            for (Map.Entry<String, List<Integer>> entry : chunkAuthors.entrySet()) {
                 String chunkAuthor = entry.getKey();
-                int contribution = authors.containsKey(chunkAuthor)
-                        ? authors.get(chunkAuthor) + entry.getValue()
-                        : entry.getValue();
-                authors.put(chunkAuthor, contribution);
+                List<List<Integer>> authorLines = authors.containsKey(chunkAuthor)
+                        ? authors.get(chunkAuthor)
+                        : new ArrayList<>();
+                authorLines.add(entry.getValue());
+                authors.put(chunkAuthor, authorLines);
             }
 
             chunkAuthors.clear();
@@ -119,5 +128,27 @@ class GitConflictBlame {
         pr.getOutputStream().close();
 
         return result;
+    }
+
+    static HashMap<String, HashMap<String, List<Integer>>> blameFile(File conflictFile) throws IOException {
+        HashMap<String, HashMap<String, List<List<Integer>>>> chunkResult = blameChunks(conflictFile);
+        HashMap<String, HashMap<String, List<Integer>>> fileResult = new HashMap<>();
+
+        // just aggregate chunks
+        for (String revision : chunkResult.keySet()) {
+            HashMap<String, List<Integer>> authors = new HashMap<>();
+            HashMap<String, List<List<Integer>>> chunkMap = chunkResult.get(revision);
+
+
+            for (String author : chunkMap.keySet()) {
+                List<Integer> authorLines = new ArrayList<>();
+                chunkMap.get(author).forEach(authorLines::addAll);
+                authors.put(author, authorLines);
+            }
+
+            fileResult.put(revision, authors);
+        }
+
+        return fileResult;
     }
 }
