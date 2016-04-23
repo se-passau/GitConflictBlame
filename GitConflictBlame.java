@@ -119,6 +119,9 @@ class GitConflictBlame {
         buf.close();
 
         if (pr.exitValue() != 0) {
+            buf = new BufferedReader(new InputStreamReader(pr.getErrorStream()));
+            buf.lines().forEach(System.err::println);
+            buf.close();
             throw new RuntimeException(String.format("Error on external call with exit code %d",
                     pr.exitValue()));
         }
